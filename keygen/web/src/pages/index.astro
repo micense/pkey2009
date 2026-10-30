@@ -24,6 +24,16 @@ function buildCommit() {
   }
 }
 const commit = buildCommit();
+
+// Sortable catalog columns: [sku field, header label].
+const CATALOG_COLUMNS = [
+  ['product', 'product'],
+  ['group', 'group'],
+  ['edition', 'edition'],
+  ['channel', 'channel'],
+  ['part_number', 'part #'],
+  ['serial_end', 'serials'],
+];
 ---
 
 <!doctype html>
@@ -156,18 +166,22 @@ const commit = buildCommit();
         <table>
           <thead>
             <tr>
-              <th>product</th>
-              <th>group</th>
-              <th>edition</th>
-              <th>channel</th>
-              <th>part #</th>
-              <th>serials</th>
+              {CATALOG_COLUMNS.map(([key, label]) => (
+                <th aria-sort="none">
+                  <button type="button" class="sort" data-key={key}>
+                    {label}
+                  </button>
+                </th>
+              ))}
               <th></th>
             </tr>
           </thead>
           <tbody id="cat-rows"></tbody>
         </table>
       </div>
+      <button type="button" id="cat-more" hidden>
+        Show more
+      </button>
       <p class="msg" id="cat-foot"></p>
     </main>
 
@@ -297,9 +311,12 @@ const commit = buildCommit();
       });
 
       // ── catalog (loads only on request; several MB) ──
-      const CAP = 200;
+      const PAGE = 200;
       let catalog = null;
       let loading = false;
+      let limit = PAGE;
+      let sort = { key: null, dir: 1 };
+      const moreBtn = $('#cat-more');
       const q = $('#cat-q');
       const productFilter = $('#cat-product');
       const channelFilter = $('#cat-channel');
@@ -325,24 +342,119 @@ const commit = buildCommit();
         }
       }
 
+      // Searchable text per SKU, built once on load rather than per keystroke.
+      const haystacks = new WeakMap();
+      const haystack = (sku) =>
+        [
+          sku.product,
+          sku.group,
+          sku.edition,
+          sku.channel,
+          sku.part_number,
+          sku.description,
+          sku.activation_uuid,
+        ]
+          .filter((value) => value != null)
+          .join(' ')
+          .toLowerCase();
+
+      const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+      function compare(a, b) {
+        const x = a[sort.key];
+        const y = b[sort.key];
+        if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1; // blanks last
+        return sort.dir * (typeof x === 'number' ? x - y : collator.compare(x, y));
+      }
+
+      // Long semicolon-joined edition lists need break points (<wbr>) to wrap.
+      function breakable(text) {
+        const frag = document.createDocumentFragment();
+        text.split(';').forEach((part, i) => {
+          if (i) frag.append(';', document.createElement('wbr'));
+          frag.append(part);
+        });
+        return frag;
+      }
+
+      function detailRow(sku) {
+        const tr = document.createElement('tr');
+        tr.className = 'detail';
+        const cell = document.createElement('td');
+        cell.colSpan = 7;
+        const dl = document.createElement('dl');
+        const f = (n) => n.toLocaleString('en-US');
+        for (const [label, value] of [
+          ['description', sku.description],
+          ['edition', sku.edition && breakable(sku.edition)],
+          ['activation id', sku.activation_uuid],
+          ['EULA', sku.eula_type],
+          ['serials', sku.serial_start != null && `${f(sku.serial_start)} – ${f(sku.serial_end)}`],
+        ]) {
+          if (!value) continue;
+          const dt = document.createElement('dt');
+          dt.textContent = label;
+          const dd = document.createElement('dd');
+          dd.append(value);
+          dl.append(dt, dd);
+        }
+        cell.append(dl);
+        tr.append(cell);
+        return tr;
+      }
+
+      function toggleDetail(tr) {
+        const open = tr.getAttribute('aria-expanded') === 'true';
+        tr.setAttribute('aria-expanded', String(!open));
+        if (open) tr.nextElementSibling.remove();
+        else tr.after(detailRow(tr.sku));
+      }
+
+      rowsBody.addEventListener('click', (event) => {
+        if (event.target.closest('button, a')) return;
+        const tr = event.target.closest('tr.sku');
+        if (tr) toggleDetail(tr);
+      });
+      rowsBody.addEventListener('keydown', (event) => {
+        if (event.target.matches('tr.sku') && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          toggleDetail(event.target);
+        }
+      });
+
+      for (const button of document.querySelectorAll('#cat-table .sort')) {
+        button.addEventListener('click', () => {
+          const key = button.dataset.key;
+          sort = { key, dir: sort.key === key ? -sort.dir : 1 };
+          for (const th of document.querySelectorAll('#cat-table th[aria-sort]')) {
+            th.setAttribute('aria-sort', 'none');
+          }
+          button.parentElement.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending');
+          renderCatalog();
+        });
+      }
+
       function renderCatalog() {
         if (!catalog) return;
-        const query = q.value.trim().toLowerCase();
+        const terms = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
         const product = productFilter.value;
         const channel = channelFilter.value;
 
         const matches = catalog.filter((sku) => {
           if (product && sku.product !== product) return false;
           if (channel && (sku.channel || '') !== channel) return false;
-          if (!query) return true;
-          const hay =
-            `${sku.product} ${sku.group} ${sku.edition || ''} ${sku.channel || ''} ${sku.part_number || ''} ${sku.description || ''}`.toLowerCase();
-          return hay.includes(query);
+          const hay = haystacks.get(sku);
+          return terms.every((term) => hay.includes(term));
         });
+        if (sort.key) matches.sort(compare);
 
         const frag = document.createDocumentFragment();
-        for (const sku of matches.slice(0, CAP)) {
+        for (const sku of matches.slice(0, limit)) {
           const tr = document.createElement('tr');
+          tr.className = 'sku';
+          tr.sku = sku;
+          tr.tabIndex = 0;
+          tr.setAttribute('aria-expanded', 'false');
+          tr.title = sku.description || '';
           const td = (text, cls) => {
             const cell = document.createElement('td');
             if (cls) cell.className = cls;
@@ -350,8 +462,8 @@ const commit = buildCommit();
             return cell;
           };
 
-          const edition = td(sku.edition || '', 'edition');
-          edition.title = sku.edition || '';
+          const edition = td('', 'edition');
+          edition.append(breakable(sku.edition || ''));
 
           const act = document.createElement('td');
           const gen = document.createElement('button');
@@ -379,11 +491,26 @@ const commit = buildCommit();
         }
         rowsBody.replaceChildren(frag);
 
+        const n = (value) => value.toLocaleString('en-US');
+        const shown = Math.min(limit, matches.length);
+        moreBtn.hidden = shown === matches.length;
+        moreBtn.textContent = `Show ${n(Math.min(PAGE, matches.length - shown))} more`;
         foot.textContent =
-          matches.length > CAP
-            ? `Showing first ${CAP} of ${matches.length.toLocaleString('en-US')} matches — refine the search.`
-            : `${matches.length.toLocaleString('en-US')} of ${catalog.length.toLocaleString('en-US')} SKUs.`;
+          shown < matches.length
+            ? `Showing ${n(shown)} of ${n(matches.length)} matches.`
+            : `${n(matches.length)} of ${n(catalog.length)} SKUs.`;
       }
+
+      // A new search or filter starts from the first page again.
+      function refilter() {
+        limit = PAGE;
+        renderCatalog();
+      }
+
+      moreBtn.addEventListener('click', () => {
+        limit += PAGE;
+        renderCatalog();
+      });
 
       async function loadCatalog() {
         if (catalog || loading) return;
@@ -394,6 +521,7 @@ const commit = buildCommit();
           const response = await fetch(`${base}/res/sku_catalog.json`);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           catalog = await response.json();
+          for (const sku of catalog) haystacks.set(sku, haystack(sku));
 
           fillOptions(productFilter, [...new Set(catalog.map((s) => s.product))].sort());
           fillOptions(
@@ -417,7 +545,7 @@ const commit = buildCommit();
 
       loadBtn.addEventListener('click', loadCatalog);
       for (const element of [q, productFilter, channelFilter]) {
-        element.addEventListener('input', renderCatalog);
+        element.addEventListener('input', refilter);
       }
     </script>
   </body>
