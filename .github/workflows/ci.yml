@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  # Build must also succeed on PRs (no deploy).
+  build:
+    needs: lint
+    uses: ./.github/workflows/build.yml

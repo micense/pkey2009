@@ -1,0 +1,33 @@
+name: Lint
+
+# Reusable: called by CI (on PRs) and by the Pages deploy (before building).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  prek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node + web deps, needed by the local Prettier hook.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: keygen/web/pnpm-lock.yaml
+      - name: Install web deps
+        run: pnpm install --frozen-lockfile
+        working-directory: keygen/web
+
+      # uv provides the Python envs prek builds its hooks in.
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Run prek hooks
+        run: uvx prek run --all-files --show-diff-on-failure

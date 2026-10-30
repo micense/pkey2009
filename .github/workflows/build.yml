@@ -1,0 +1,23 @@
+name: Build site
+
+# Reusable: builds the Astro site and uploads the GitHub Pages artifact.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Publish the data tables alongside the site (served at /pkey2009/res/…).
+      # Astro copies keygen/web/public/ verbatim into the build output.
+      - name: Stage res/ into the site
+        run: cp -r res keygen/web/public/res
+      - uses: withastro/action@v6
+        with:
+          path: keygen/web
+          node-version: 24
+          package-manager: pnpm@12.15.0
