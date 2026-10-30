@@ -1,0 +1,35 @@
+name: Publish to PyPI
+
+# PyPI trusted publishing (OIDC — no API token). Runs when a GitHub Release is
+# published (see release.yml), or manually.
+#
+# One-time setup on PyPI: add a trusted publisher for the project pointing at
+#   owner=micense, repo=pkey2009, workflow=publish.yml, environment=pypi
+# (https://docs.pypi.org/trusted-publishers/).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pkey2009/
+    permissions:
+      id-token: write # mint the OIDC token for trusted publishing
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build sdist + wheel
+        run: uv build
+        working-directory: keygen/python
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: keygen/python/dist

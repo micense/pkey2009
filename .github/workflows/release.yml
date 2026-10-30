@@ -1,0 +1,27 @@
+name: Release
+
+# Tag a version to cut a release:  git tag v1.0.0 && git push --tags
+# Builds the Python package and creates a GitHub Release with the artifacts.
+# Publishing the release triggers publish.yml (PyPI trusted publishing).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build sdist + wheel
+        run: uv build
+        working-directory: keygen/python
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" keygen/python/dist/* --generate-notes
