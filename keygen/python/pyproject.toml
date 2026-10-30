@@ -1,0 +1,35 @@
+[project]
+name = "pkey2009"
+version = "1.0.0"
+description = "Oracle-free keygen for Microsoft PKEY2009 product keys (research)."
+# README and LICENSE sit at the repository root, one level above this project
+# directory: ../README.md and ../LICENSE.
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    "typer>=0.15",
+    "rich>=13.9",
+]
+
+[project.scripts]
+pkey2009 = "pkey2009.keygen:_cli_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pkey2009"]
+
+[dependency-groups]
+dev = ["ruff>=0.7"]
+
+[tool.ruff]
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# The formatter owns layout: allow long lines (aligned SKU tables, Rich markup)
+# and the compact one-line guards it keeps.
+ignore = ["E501", "E701", "E702"]

@@ -1,0 +1,7 @@
+{
+  // Project folder opened directly (keygen/python). Its virtual environment
+  // is .venv here; the package root is this folder.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "python.terminal.activateEnvironment": true
+}
