@@ -134,8 +134,20 @@ button {
   cursor: pointer;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   border-color: var(--muted);
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
 }
 
 pre {
@@ -200,7 +212,7 @@ td.edition {
   text-overflow: ellipsis;
 }
 
-td.mono {
+.mono {
   font-family: ui-monospace, Consolas, monospace;
 }
 

@@ -36,6 +36,8 @@ const commit = buildCommit();
       name="description"
       content="Generate, decode and browse PKEY2009 product keys in the browser. Research only."
     />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)" />
     <link rel="canonical" href={Astro.url} />
     <link rel="icon" href={`${base}/favicon.svg`} />
   </head>
@@ -84,6 +86,7 @@ const commit = buildCommit();
             <span>Security (hex, optional)</span>
             <input
               id="security"
+              class="mono"
               type="text"
               placeholder="random 53-bit"
               autocomplete="off"
@@ -107,6 +110,7 @@ const commit = buildCommit();
           <span>Key</span>
           <input
             id="key"
+            class="mono"
             type="text"
             placeholder="W269N-WFGWX-YVC9B-4J6C9-T83GX"
             autocomplete="off"
