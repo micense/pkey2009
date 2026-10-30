@@ -1,0 +1,398 @@
+---
+import { readFileSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { SKU_GROUPS } from '../data/skus.js';
+import '../styles/global.css';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+// Catalog size/count are computed at build time from the real res/ data (the
+// same file CI publishes), so these figures never drift from the catalog. The
+// Astro build runs with cwd = keygen/web, two levels under the repo root.
+const catalogPath = resolve(process.cwd(), '../../res/sku_catalog.json');
+const catalogCount = JSON.parse(readFileSync(catalogPath, 'utf8')).length.toLocaleString('en-US');
+const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PKEY2009 keygen</title>
+    <meta
+      name="description"
+      content="Generate, decode and browse PKEY2009 product keys in the browser. Research only."
+    />
+    <link rel="canonical" href={Astro.url} />
+    <link rel="icon" href={`${base}/favicon.svg`} />
+  </head>
+  <body>
+    <header>
+      <a href={`${base}/`}>pkey2009</a>
+      <a href="https://github.com/micense/pkey2009">GitHub</a>
+    </header>
+
+    <main>
+      <h1>PKEY2009 keygen</h1>
+      <p>
+        Generate, decode and browse Microsoft PKEY2009 product keys. Everything runs in your browser
+        — nothing leaves the page.
+      </p>
+      <p class="note">
+        Research/educational use only. These keys were not issued by Microsoft and will not activate
+        against its servers.
+      </p>
+      <noscript>
+        <p class="msg error">This keygen needs JavaScript.</p>
+      </noscript>
+
+      <h2>Generate</h2>
+      <form id="gen-form">
+        <label>
+          <span>Product</span>
+          <select id="product">
+            {SKU_GROUPS.map((group) => (
+              <optgroup label={group.family}>
+                {group.items.map((sku) => (
+                  <option value={String(sku.group)} data-upgrade={String(sku.upgrade)}>
+                    {sku.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <div class="inline">
+          <label>
+            <span>Count</span>
+            <input id="count" type="number" min="1" max="25" value="1" />
+          </label>
+          <label>
+            <span>Security (hex, optional)</span>
+            <input
+              id="security"
+              type="text"
+              placeholder="random 53-bit"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+        </div>
+        <button type="submit">Generate</button>
+      </form>
+      <div class="keybox">
+        <pre id="keys" aria-live="polite"></pre>
+        <button id="copy" type="button" hidden>
+          Copy
+        </button>
+      </div>
+      <p class="msg error" id="gen-msg"></p>
+
+      <h2>Decode</h2>
+      <form id="dec-form">
+        <label>
+          <span>Key</span>
+          <input
+            id="key"
+            type="text"
+            placeholder="W269N-WFGWX-YVC9B-4J6C9-T83GX"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <button type="submit">Decode</button>
+      </form>
+      <table id="fields" aria-live="polite"></table>
+      <p class="msg" id="dec-msg"></p>
+
+      <h2>Catalog</h2>
+      <p class="note">The full catalog ({catalogCount} SKUs) loads on demand.</p>
+      <div class="tools">
+        <label class="search">
+          <span>Search</span>
+          <input
+            id="cat-q"
+            type="text"
+            placeholder="product, edition, group, part #…"
+            autocomplete="off"
+            spellcheck="false"
+            disabled
+          />
+        </label>
+        <label class="filter">
+          <span>Product</span>
+          <select id="cat-product" disabled>
+            <option value="">all</option>
+          </select>
+        </label>
+        <label class="filter">
+          <span>Channel</span>
+          <select id="cat-channel" disabled>
+            <option value="">all</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" id="cat-load">
+        Load catalog (≈{catalogSize})
+      </button>
+      <div class="table-scroll" id="cat-table" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th>product</th>
+              <th>group</th>
+              <th>edition</th>
+              <th>channel</th>
+              <th>part #</th>
+              <th>serials</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="cat-rows"></tbody>
+        </table>
+      </div>
+      <p class="msg" id="cat-foot"></p>
+    </main>
+
+    <footer>
+      <span>Research only — generated keys don't activate.</span>
+      <a href="https://github.com/micense/pkey2009">Source, CLI &amp; docs</a>
+    </footer>
+
+    <script>
+      import { decode, forge, predictChecksum, randomSecurity } from '../lib/keygen.js';
+
+      const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+      const $ = (sel) => document.querySelector(sel);
+      const hex = (value, width = 0) =>
+        `0x${value.toString(16).toUpperCase().padStart(width, '0')}`;
+
+      function parseSecurity(raw) {
+        const value = raw.trim().replace(/^0x/i, '');
+        if (!value) return null;
+        if (!/^[0-9a-f]+$/i.test(value)) throw new Error('security must be hexadecimal');
+        const security = BigInt(`0x${value}`);
+        if (security > (1n << 53n) - 1n) throw new Error('security must fit in 53 bits');
+        return security;
+      }
+
+      // ── generate ──
+      const keysOut = $('#keys');
+      const copyBtn = $('#copy');
+      const genMsg = $('#gen-msg');
+
+      function setKeys(lines) {
+        keysOut.textContent = lines.join('\n');
+        copyBtn.hidden = lines.length === 0;
+      }
+
+      $('#gen-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        genMsg.textContent = '';
+        try {
+          const option = $('#product').selectedOptions[0];
+          const group = Number(option.value);
+          const upgrade = Number(option.dataset.upgrade);
+          const count = Math.min(25, Math.max(1, Number($('#count').value) || 1));
+          const fixed = parseSecurity($('#security').value);
+
+          const keys = [];
+          for (let i = 0; i < count; i++) {
+            keys.push(forge(group, 0, fixed ?? randomSecurity(), upgrade).key);
+          }
+          setKeys(keys);
+        } catch (error) {
+          setKeys([]);
+          genMsg.textContent = error.message;
+        }
+      });
+
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(keysOut.textContent);
+          copyBtn.textContent = 'Copied';
+          setTimeout(() => (copyBtn.textContent = 'Copy'), 1200);
+        } catch {
+          copyBtn.textContent = 'Copy failed';
+        }
+      });
+
+      // ── decode ──
+      const fields = $('#fields');
+      const decMsg = $('#dec-msg');
+
+      function row(label, value, className) {
+        const tr = document.createElement('tr');
+        const th = document.createElement('th');
+        th.textContent = label;
+        const td = document.createElement('td');
+        td.className = `mono${className ? ' ' + className : ''}`;
+        if (value instanceof Node) td.append(value);
+        else td.textContent = value;
+        tr.append(th, td);
+        return tr;
+      }
+
+      $('#dec-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        decMsg.textContent = '';
+        try {
+          const parsed = decode($('#key').value);
+          const sku = catalog?.find((item) => item.group === parsed.group);
+          const expected = predictChecksum(
+            parsed.group,
+            parsed.serial,
+            parsed.security,
+            parsed.upgrade,
+          );
+
+          const check = document.createElement('span');
+          const valid = expected === parsed.checksum;
+          check.className = valid ? 'ok' : 'bad';
+          check.textContent = valid
+            ? `${hex(parsed.checksum, 3)}  ✓ valid`
+            : `${hex(parsed.checksum, 3)}  ✗ expected ${hex(expected, 3)}`;
+
+          fields.replaceChildren(
+            row(
+              'group',
+              sku ? `${parsed.group} (${sku.product} · ${sku.edition})` : String(parsed.group),
+            ),
+            row('serial', String(parsed.serial)),
+            row('security', hex(parsed.security)),
+            row('checksum', check),
+            row('upgrade', String(parsed.upgrade)),
+          );
+        } catch (error) {
+          fields.replaceChildren();
+          decMsg.textContent = error.message;
+        }
+      });
+
+      // ── catalog (loads only on request; several MB) ──
+      const CAP = 200;
+      let catalog = null;
+      let loading = false;
+      const q = $('#cat-q');
+      const productFilter = $('#cat-product');
+      const channelFilter = $('#cat-channel');
+      const rowsBody = $('#cat-rows');
+      const foot = $('#cat-foot');
+      const loadBtn = $('#cat-load');
+      const tableWrap = $('#cat-table');
+
+      function fmtSerials(a, b) {
+        if (a == null || b == null) return '';
+        const f = (n) => n.toLocaleString('en-US');
+        if (a === b) return f(a);
+        if (b < 1_000_000) return `${f(a)}..${f(b)}`;
+        return `${f(a)}..${Math.round(b / 1e6)}M`;
+      }
+
+      function fillOptions(select, values) {
+        for (const value of values) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = value;
+          select.append(option);
+        }
+      }
+
+      function renderCatalog() {
+        if (!catalog) return;
+        const query = q.value.trim().toLowerCase();
+        const product = productFilter.value;
+        const channel = channelFilter.value;
+
+        const matches = catalog.filter((sku) => {
+          if (product && sku.product !== product) return false;
+          if (channel && (sku.channel || '') !== channel) return false;
+          if (!query) return true;
+          const hay =
+            `${sku.product} ${sku.group} ${sku.edition || ''} ${sku.channel || ''} ${sku.part_number || ''} ${sku.description || ''}`.toLowerCase();
+          return hay.includes(query);
+        });
+
+        const frag = document.createDocumentFragment();
+        for (const sku of matches.slice(0, CAP)) {
+          const tr = document.createElement('tr');
+          const td = (text, cls) => {
+            const cell = document.createElement('td');
+            if (cls) cell.className = cls;
+            cell.textContent = text;
+            return cell;
+          };
+
+          const edition = td(sku.edition || '', 'edition');
+          edition.title = sku.edition || '';
+
+          const act = document.createElement('td');
+          const gen = document.createElement('button');
+          gen.type = 'button';
+          gen.textContent = 'gen';
+          gen.addEventListener('click', () => {
+            const upgrade = sku.product.startsWith('sql') ? 1 : 0;
+            const { key } = forge(sku.group, 0, randomSecurity(), upgrade);
+            genMsg.textContent = '';
+            setKeys([key, ...keysOut.textContent.split('\n').filter(Boolean)]);
+            $('#keys').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+          act.append(gen);
+
+          tr.append(
+            td(sku.product, 'mono'),
+            td(String(sku.group), 'mono'),
+            edition,
+            td(sku.channel || ''),
+            td(sku.part_number || '', 'mono'),
+            td(fmtSerials(sku.serial_start, sku.serial_end), 'mono'),
+            act,
+          );
+          frag.append(tr);
+        }
+        rowsBody.replaceChildren(frag);
+
+        foot.textContent =
+          matches.length > CAP
+            ? `Showing first ${CAP} of ${matches.length.toLocaleString('en-US')} matches — refine the search.`
+            : `${matches.length.toLocaleString('en-US')} of ${catalog.length.toLocaleString('en-US')} SKUs.`;
+      }
+
+      async function loadCatalog() {
+        if (catalog || loading) return;
+        loading = true;
+        loadBtn.disabled = true;
+        loadBtn.textContent = 'Loading…';
+        try {
+          const response = await fetch(`${base}/res/sku_catalog.json`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          catalog = await response.json();
+
+          fillOptions(productFilter, [...new Set(catalog.map((s) => s.product))].sort());
+          fillOptions(
+            channelFilter,
+            [...new Set(catalog.map((s) => s.channel).filter(Boolean))].sort(),
+          );
+
+          loadBtn.hidden = true;
+          tableWrap.hidden = false;
+          for (const element of [q, productFilter, channelFilter]) element.disabled = false;
+          renderCatalog();
+          q.focus();
+        } catch (error) {
+          foot.textContent = `Could not load catalog (${error.message}). Published by CI; for local dev copy res/ into keygen/web/public/.`;
+          loadBtn.disabled = false;
+          loadBtn.textContent = 'Retry';
+        } finally {
+          loading = false;
+        }
+      }
+
+      loadBtn.addEventListener('click', loadCatalog);
+      for (const element of [q, productFilter, channelFilter]) {
+        element.addEventListener('input', renderCatalog);
+      }
+    </script>
+  </body>
+</html>
