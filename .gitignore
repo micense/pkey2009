@@ -5,3 +5,6 @@ dist/
 build/
 *.egg-info/
 .ruff_cache/
+
+# Generated at build time by hatch_build.py (source is repo-root res/).
+keygen/python/pkey2009/res/
