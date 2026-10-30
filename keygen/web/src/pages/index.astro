@@ -169,12 +169,17 @@ const commit = buildCommit();
 
     <footer>
       <span>Research only — generated keys don't activate.</span>
-      <a href="https://github.com/micense/pkey2009">Source, CLI &amp; docs</a>
-      {commit && (
-        <a class="mono" href={`https://github.com/micense/pkey2009/commit/${commit}`}>
-          {commit.slice(0, 7)}
-        </a>
-      )}
+      <span class="links">
+        <a href="https://github.com/micense/pkey2009">Source, CLI &amp; docs</a>
+        {commit && (
+          <>
+            {' · '}
+            <a class="mono" href={`https://github.com/micense/pkey2009/commit/${commit}`}>
+              {commit.slice(0, 7)}
+            </a>
+          </>
+        )}
+      </span>
     </footer>
 
     <script>
