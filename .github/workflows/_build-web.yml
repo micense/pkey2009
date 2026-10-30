@@ -1,4 +1,4 @@
-name: Build site
+name: Build web
 
 # Reusable: builds the Astro site and uploads the GitHub Pages artifact.
 on:

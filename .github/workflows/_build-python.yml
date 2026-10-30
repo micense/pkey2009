@@ -1,0 +1,34 @@
+name: Build Python package
+
+# Reusable: builds the sdist + wheel, validates the metadata, and smoke-tests
+# the installed wheel (including the bundled res/ data). Called by CI on PRs.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: keygen/python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+
+      # uv builds the sdist, then the wheel from it, so this also covers
+      # building without the repo-root res/ present.
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Check metadata and README
+        run: uvx twine check --strict dist/*
+
+      - name: Smoke-test the installed wheel
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke dist/*.whl
+          /tmp/smoke/bin/pkey2009 gen win11pro
+          /tmp/smoke/bin/pkey2009 list --search Workstation

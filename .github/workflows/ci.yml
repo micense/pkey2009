@@ -8,9 +8,13 @@ permissions:
 
 jobs:
   lint:
-    uses: ./.github/workflows/lint.yml
+    uses: ./.github/workflows/_lint.yml
 
-  # Build must also succeed on PRs (no deploy).
-  build:
+  # The site build must also succeed on PRs (no deploy).
+  web:
     needs: lint
-    uses: ./.github/workflows/build.yml
+    uses: ./.github/workflows/_build-web.yml
+
+  python:
+    needs: lint
+    uses: ./.github/workflows/_build-python.yml

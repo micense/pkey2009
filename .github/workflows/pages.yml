@@ -17,11 +17,11 @@ concurrency:
 jobs:
   # Lint first — a failure here blocks the build and the deploy.
   lint:
-    uses: ./.github/workflows/lint.yml
+    uses: ./.github/workflows/_lint.yml
 
   build:
     needs: lint
-    uses: ./.github/workflows/build.yml
+    uses: ./.github/workflows/_build-web.yml
 
   deploy:
     needs: build

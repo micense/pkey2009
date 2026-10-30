@@ -1,18 +1,26 @@
 name: Release
 
 # Tag a version to cut a release:  git tag v1.0.0 && git push --tags
-# Builds the Python package and creates a GitHub Release with the artifacts.
-# Publishing the release triggers publish.yml (PyPI trusted publishing).
+# Builds the Python package, creates a GitHub Release with the artifacts, then
+# publishes them to PyPI. Publishing lives here rather than in a workflow
+# triggered by the release, because events created with GITHUB_TOKEN don't
+# start other workflows.
+#
+# PyPI uses trusted publishing (OIDC — no API token). One-time setup on PyPI:
+# add a trusted publisher for the project pointing at
+#   owner=micense, repo=pkey2009, workflow=release.yml, environment=pypi
+# (https://docs.pypi.org/trusted-publishers/).
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write # create the GitHub Release
+permissions: {}
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
@@ -21,7 +29,40 @@ jobs:
         run: uv build
         working-directory: keygen/python
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: keygen/python/dist/
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" keygen/python/dist/* --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --generate-notes
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pkey2009/
+    permissions:
+      id-token: write # mint the OIDC token for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
