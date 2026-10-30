@@ -222,10 +222,34 @@ const CATALOG_COLUMNS = [
       const copyBtn = $('#copy');
       const genMsg = $('#gen-msg');
 
+      // Mirror the last action in the address bar so the page can be shared.
+      function setQuery(params) {
+        history.replaceState(null, '', `?${new URLSearchParams(params)}`);
+      }
+
+      // Each key links to ?key=… (shareable); a plain click decodes it in place.
       function setKeys(lines) {
-        keysOut.textContent = lines.join('\n');
+        const frag = document.createDocumentFragment();
+        lines.forEach((key, i) => {
+          if (i) frag.append('\n');
+          const link = document.createElement('a');
+          link.href = `?${new URLSearchParams({ key })}`;
+          link.title = 'Decode this key';
+          link.textContent = key;
+          frag.append(link);
+        });
+        keysOut.replaceChildren(frag);
         copyBtn.hidden = lines.length === 0;
       }
+
+      keysOut.addEventListener('click', (event) => {
+        const link = event.target.closest('a');
+        if (!link || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        event.preventDefault();
+        $('#key').value = link.textContent;
+        $('#dec-form').requestSubmit();
+        $('#dec-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
 
       $('#gen-form').addEventListener('submit', (event) => {
         event.preventDefault();
@@ -242,6 +266,7 @@ const CATALOG_COLUMNS = [
             keys.push(forge(group, 0, fixed ?? randomSecurity(), upgrade).key);
           }
           setKeys(keys);
+          setQuery({ gen: group, ...(upgrade && { upgrade }), ...(count > 1 && { count }) });
         } catch (error) {
           setKeys([]);
           genMsg.textContent = error.message;
@@ -304,6 +329,7 @@ const CATALOG_COLUMNS = [
             row('checksum', check),
             row('upgrade', String(parsed.upgrade)),
           );
+          setQuery({ key: $('#key').value.trim() });
         } catch (error) {
           fields.replaceChildren();
           decMsg.textContent = error.message;
@@ -546,6 +572,34 @@ const CATALOG_COLUMNS = [
       loadBtn.addEventListener('click', loadCatalog);
       for (const element of [q, productFilter, channelFilter]) {
         element.addEventListener('input', refilter);
+      }
+
+      // ── deep links: ?key=… decodes, ?gen=<group>[&upgrade=1][&count=n] generates ──
+      const params = new URLSearchParams(location.search);
+      if (params.has('key')) {
+        $('#key').value = params.get('key');
+        $('#dec-form').requestSubmit();
+      } else if (params.has('gen')) {
+        const raw = params.get('gen');
+        const group = Number(raw);
+        const upgrade = params.get('upgrade') === '1' ? '1' : '0';
+        const product = $('#product');
+        if (/^\d+$/.test(raw) && group <= 0xfffff) {
+          // Groups outside the curated list get an ad-hoc option so the form stays the source.
+          let option = [...product.options].find(
+            (o) => o.value === String(group) && o.dataset.upgrade === upgrade,
+          );
+          if (!option) {
+            option = new Option(`Group ${group}${upgrade === '1' ? ' (upgrade)' : ''}`, group);
+            option.dataset.upgrade = upgrade;
+            product.prepend(option);
+          }
+          option.selected = true;
+          if (params.has('count')) $('#count').value = params.get('count');
+          $('#gen-form').requestSubmit();
+        } else {
+          genMsg.textContent = `invalid group "${raw}"`;
+        }
       }
     </script>
   </body>

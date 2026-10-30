@@ -177,6 +177,16 @@ pre:empty {
   padding-right: 4rem; /* room for the copy button */
 }
 
+#keys a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#keys a:hover {
+  color: var(--link);
+  text-decoration: underline;
+}
+
 .keybox #copy {
   position: absolute;
   top: 0.5rem;
