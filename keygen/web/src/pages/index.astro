@@ -1,4 +1,5 @@
 ---
+import { execSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SKU_GROUPS } from '../data/skus.js';
@@ -12,6 +13,27 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const catalogPath = resolve(process.cwd(), '../../res/sku_catalog.json');
 const catalogCount = JSON.parse(readFileSync(catalogPath, 'utf8')).length.toLocaleString('en-US');
 const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
+
+// Commit the site was built from: GITHUB_SHA in CI, else the local checkout.
+function buildCommit() {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  try {
+    return execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+const commit = buildCommit();
+
+// Sortable catalog columns: [sku field, header label].
+const CATALOG_COLUMNS = [
+  ['product', 'product'],
+  ['group', 'group'],
+  ['edition', 'edition'],
+  ['channel', 'channel'],
+  ['part_number', 'part #'],
+  ['serial_end', 'serials'],
+];
 ---
 
 <!doctype html>
@@ -24,6 +46,8 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
       name="description"
       content="Generate, decode and browse PKEY2009 product keys in the browser. Research only."
     />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)" />
     <link rel="canonical" href={Astro.url} />
     <link rel="icon" href={`${base}/favicon.svg`} />
   </head>
@@ -72,6 +96,7 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
             <span>Security (hex, optional)</span>
             <input
               id="security"
+              class="mono"
               type="text"
               placeholder="random 53-bit"
               autocomplete="off"
@@ -95,6 +120,7 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
           <span>Key</span>
           <input
             id="key"
+            class="mono"
             type="text"
             placeholder="W269N-WFGWX-YVC9B-4J6C9-T83GX"
             autocomplete="off"
@@ -140,24 +166,38 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
         <table>
           <thead>
             <tr>
-              <th>product</th>
-              <th>group</th>
-              <th>edition</th>
-              <th>channel</th>
-              <th>part #</th>
-              <th>serials</th>
+              {CATALOG_COLUMNS.map(([key, label]) => (
+                <th aria-sort="none">
+                  <button type="button" class="sort" data-key={key}>
+                    {label}
+                  </button>
+                </th>
+              ))}
               <th></th>
             </tr>
           </thead>
           <tbody id="cat-rows"></tbody>
         </table>
       </div>
+      <button type="button" id="cat-more" hidden>
+        Show more
+      </button>
       <p class="msg" id="cat-foot"></p>
     </main>
 
     <footer>
       <span>Research only — generated keys don't activate.</span>
-      <a href="https://github.com/micense/pkey2009">Source, CLI &amp; docs</a>
+      <span class="links">
+        <a href="https://github.com/micense/pkey2009">Source, CLI &amp; docs</a>
+        {commit && (
+          <>
+            {' · '}
+            <a class="mono" href={`https://github.com/micense/pkey2009/commit/${commit}`}>
+              {commit.slice(0, 7)}
+            </a>
+          </>
+        )}
+      </span>
     </footer>
 
     <script>
@@ -182,10 +222,34 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
       const copyBtn = $('#copy');
       const genMsg = $('#gen-msg');
 
+      // Mirror the last action in the address bar so the page can be shared.
+      function setQuery(params) {
+        history.replaceState(null, '', `?${new URLSearchParams(params)}`);
+      }
+
+      // Each key links to ?key=… (shareable); a plain click decodes it in place.
       function setKeys(lines) {
-        keysOut.textContent = lines.join('\n');
+        const frag = document.createDocumentFragment();
+        lines.forEach((key, i) => {
+          if (i) frag.append('\n');
+          const link = document.createElement('a');
+          link.href = `?${new URLSearchParams({ key })}`;
+          link.title = 'Decode this key';
+          link.textContent = key;
+          frag.append(link);
+        });
+        keysOut.replaceChildren(frag);
         copyBtn.hidden = lines.length === 0;
       }
+
+      keysOut.addEventListener('click', (event) => {
+        const link = event.target.closest('a');
+        if (!link || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        event.preventDefault();
+        $('#key').value = link.textContent;
+        $('#dec-form').requestSubmit();
+        $('#dec-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
 
       $('#gen-form').addEventListener('submit', (event) => {
         event.preventDefault();
@@ -202,6 +266,7 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
             keys.push(forge(group, 0, fixed ?? randomSecurity(), upgrade).key);
           }
           setKeys(keys);
+          setQuery({ gen: group, ...(upgrade && { upgrade }), ...(count > 1 && { count }) });
         } catch (error) {
           setKeys([]);
           genMsg.textContent = error.message;
@@ -264,6 +329,7 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
             row('checksum', check),
             row('upgrade', String(parsed.upgrade)),
           );
+          setQuery({ key: $('#key').value.trim() });
         } catch (error) {
           fields.replaceChildren();
           decMsg.textContent = error.message;
@@ -271,9 +337,12 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
       });
 
       // ── catalog (loads only on request; several MB) ──
-      const CAP = 200;
+      const PAGE = 200;
       let catalog = null;
       let loading = false;
+      let limit = PAGE;
+      let sort = { key: null, dir: 1 };
+      const moreBtn = $('#cat-more');
       const q = $('#cat-q');
       const productFilter = $('#cat-product');
       const channelFilter = $('#cat-channel');
@@ -299,24 +368,119 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
         }
       }
 
+      // Searchable text per SKU, built once on load rather than per keystroke.
+      const haystacks = new WeakMap();
+      const haystack = (sku) =>
+        [
+          sku.product,
+          sku.group,
+          sku.edition,
+          sku.channel,
+          sku.part_number,
+          sku.description,
+          sku.activation_uuid,
+        ]
+          .filter((value) => value != null)
+          .join(' ')
+          .toLowerCase();
+
+      const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+      function compare(a, b) {
+        const x = a[sort.key];
+        const y = b[sort.key];
+        if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1; // blanks last
+        return sort.dir * (typeof x === 'number' ? x - y : collator.compare(x, y));
+      }
+
+      // Long semicolon-joined edition lists need break points (<wbr>) to wrap.
+      function breakable(text) {
+        const frag = document.createDocumentFragment();
+        text.split(';').forEach((part, i) => {
+          if (i) frag.append(';', document.createElement('wbr'));
+          frag.append(part);
+        });
+        return frag;
+      }
+
+      function detailRow(sku) {
+        const tr = document.createElement('tr');
+        tr.className = 'detail';
+        const cell = document.createElement('td');
+        cell.colSpan = 7;
+        const dl = document.createElement('dl');
+        const f = (n) => n.toLocaleString('en-US');
+        for (const [label, value] of [
+          ['description', sku.description],
+          ['edition', sku.edition && breakable(sku.edition)],
+          ['activation id', sku.activation_uuid],
+          ['EULA', sku.eula_type],
+          ['serials', sku.serial_start != null && `${f(sku.serial_start)} – ${f(sku.serial_end)}`],
+        ]) {
+          if (!value) continue;
+          const dt = document.createElement('dt');
+          dt.textContent = label;
+          const dd = document.createElement('dd');
+          dd.append(value);
+          dl.append(dt, dd);
+        }
+        cell.append(dl);
+        tr.append(cell);
+        return tr;
+      }
+
+      function toggleDetail(tr) {
+        const open = tr.getAttribute('aria-expanded') === 'true';
+        tr.setAttribute('aria-expanded', String(!open));
+        if (open) tr.nextElementSibling.remove();
+        else tr.after(detailRow(tr.sku));
+      }
+
+      rowsBody.addEventListener('click', (event) => {
+        if (event.target.closest('button, a')) return;
+        const tr = event.target.closest('tr.sku');
+        if (tr) toggleDetail(tr);
+      });
+      rowsBody.addEventListener('keydown', (event) => {
+        if (event.target.matches('tr.sku') && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          toggleDetail(event.target);
+        }
+      });
+
+      for (const button of document.querySelectorAll('#cat-table .sort')) {
+        button.addEventListener('click', () => {
+          const key = button.dataset.key;
+          sort = { key, dir: sort.key === key ? -sort.dir : 1 };
+          for (const th of document.querySelectorAll('#cat-table th[aria-sort]')) {
+            th.setAttribute('aria-sort', 'none');
+          }
+          button.parentElement.setAttribute('aria-sort', sort.dir > 0 ? 'ascending' : 'descending');
+          renderCatalog();
+        });
+      }
+
       function renderCatalog() {
         if (!catalog) return;
-        const query = q.value.trim().toLowerCase();
+        const terms = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
         const product = productFilter.value;
         const channel = channelFilter.value;
 
         const matches = catalog.filter((sku) => {
           if (product && sku.product !== product) return false;
           if (channel && (sku.channel || '') !== channel) return false;
-          if (!query) return true;
-          const hay =
-            `${sku.product} ${sku.group} ${sku.edition || ''} ${sku.channel || ''} ${sku.part_number || ''} ${sku.description || ''}`.toLowerCase();
-          return hay.includes(query);
+          const hay = haystacks.get(sku);
+          return terms.every((term) => hay.includes(term));
         });
+        if (sort.key) matches.sort(compare);
 
         const frag = document.createDocumentFragment();
-        for (const sku of matches.slice(0, CAP)) {
+        for (const sku of matches.slice(0, limit)) {
           const tr = document.createElement('tr');
+          tr.className = 'sku';
+          tr.sku = sku;
+          tr.tabIndex = 0;
+          tr.setAttribute('aria-expanded', 'false');
+          tr.title = sku.description || '';
           const td = (text, cls) => {
             const cell = document.createElement('td');
             if (cls) cell.className = cls;
@@ -324,8 +488,8 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
             return cell;
           };
 
-          const edition = td(sku.edition || '', 'edition');
-          edition.title = sku.edition || '';
+          const edition = td('', 'edition');
+          edition.append(breakable(sku.edition || ''));
 
           const act = document.createElement('td');
           const gen = document.createElement('button');
@@ -353,11 +517,26 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
         }
         rowsBody.replaceChildren(frag);
 
+        const n = (value) => value.toLocaleString('en-US');
+        const shown = Math.min(limit, matches.length);
+        moreBtn.hidden = shown === matches.length;
+        moreBtn.textContent = `Show ${n(Math.min(PAGE, matches.length - shown))} more`;
         foot.textContent =
-          matches.length > CAP
-            ? `Showing first ${CAP} of ${matches.length.toLocaleString('en-US')} matches — refine the search.`
-            : `${matches.length.toLocaleString('en-US')} of ${catalog.length.toLocaleString('en-US')} SKUs.`;
+          shown < matches.length
+            ? `Showing ${n(shown)} of ${n(matches.length)} matches.`
+            : `${n(matches.length)} of ${n(catalog.length)} SKUs.`;
       }
+
+      // A new search or filter starts from the first page again.
+      function refilter() {
+        limit = PAGE;
+        renderCatalog();
+      }
+
+      moreBtn.addEventListener('click', () => {
+        limit += PAGE;
+        renderCatalog();
+      });
 
       async function loadCatalog() {
         if (catalog || loading) return;
@@ -368,6 +547,7 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
           const response = await fetch(`${base}/res/sku_catalog.json`);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           catalog = await response.json();
+          for (const sku of catalog) haystacks.set(sku, haystack(sku));
 
           fillOptions(productFilter, [...new Set(catalog.map((s) => s.product))].sort());
           fillOptions(
@@ -391,7 +571,35 @@ const catalogSize = `${(statSync(catalogPath).size / 1e6).toFixed(1)} MB`;
 
       loadBtn.addEventListener('click', loadCatalog);
       for (const element of [q, productFilter, channelFilter]) {
-        element.addEventListener('input', renderCatalog);
+        element.addEventListener('input', refilter);
+      }
+
+      // ── deep links: ?key=… decodes, ?gen=<group>[&upgrade=1][&count=n] generates ──
+      const params = new URLSearchParams(location.search);
+      if (params.has('key')) {
+        $('#key').value = params.get('key');
+        $('#dec-form').requestSubmit();
+      } else if (params.has('gen')) {
+        const raw = params.get('gen');
+        const group = Number(raw);
+        const upgrade = params.get('upgrade') === '1' ? '1' : '0';
+        const product = $('#product');
+        if (/^\d+$/.test(raw) && group <= 0xfffff) {
+          // Groups outside the curated list get an ad-hoc option so the form stays the source.
+          let option = [...product.options].find(
+            (o) => o.value === String(group) && o.dataset.upgrade === upgrade,
+          );
+          if (!option) {
+            option = new Option(`Group ${group}${upgrade === '1' ? ' (upgrade)' : ''}`, group);
+            option.dataset.upgrade = upgrade;
+            product.prepend(option);
+          }
+          option.selected = true;
+          if (params.has('count')) $('#count').value = params.get('count');
+          $('#gen-form').requestSubmit();
+        } else {
+          genMsg.textContent = `invalid group "${raw}"`;
+        }
       }
     </script>
   </body>
